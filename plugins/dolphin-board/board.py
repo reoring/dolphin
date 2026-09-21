@@ -5,9 +5,17 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import subprocess
 import sys
 import time
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import select
+    import termios
+    import tty
 
 
 RESET = "\033[0m"
@@ -43,7 +51,21 @@ def status(value: str) -> str:
     return f"{color}{value.upper():7}{RESET}"
 
 
-def render(data: dict) -> str:
+def board_items(data: dict) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+    workspaces = data.get("workspaces", [])
+    agents = data.get("agents", [])
+    for workspace in workspaces:
+        items.append(("workspace", workspace.get("workspace_id", "")))
+        path = (workspace.get("worktree") or {}).get("checkout_path", "")
+        for agent in agents:
+            cwd = agent.get("cwd") or agent.get("foreground_cwd") or ""
+            if cwd == path and agent.get("pane_id"):
+                items.append(("agent", agent["pane_id"]))
+    return items
+
+
+def render(data: dict, selected: int) -> str:
     workspaces = data.get("workspaces", [])
     agents = data.get("agents", [])
     by_cwd: dict[str, list[dict]] = {}
@@ -51,39 +73,92 @@ def render(data: dict) -> str:
         cwd = agent.get("cwd") or agent.get("foreground_cwd") or ""
         by_cwd.setdefault(cwd, []).append(agent)
 
-    lines = [f"{BOLD}DOLPHIN WORKBOARD{RESET}  {DIM}close pane to exit · refresh: 1s{RESET}", ""]
+    lines = [
+        f"{BOLD}DOLPHIN WORKBOARD{RESET}  "
+        f"{DIM}↑/↓ select · enter focus · q close · refresh: 1s{RESET}",
+        "",
+    ]
     if not workspaces:
         lines.append(f"{DIM}No workspaces.{RESET}")
         return "\n".join(lines)
 
+    item_index = 0
     for workspace in workspaces:
         worktree = workspace.get("worktree") or {}
         path = worktree.get("checkout_path", "")
         label = workspace.get("label") or path or workspace.get("workspace_id", "?")
-        tabs = workspace.get("tab_count", 0)
-        panes = workspace.get("pane_count", 0)
+        marker = "▶" if item_index == selected else " "
         lines.append(
-            f"{BOLD}{'▶' if workspace.get('focused') else ' '} {label}{RESET} "
-            f"{DIM}{workspace.get('agent_status', 'unknown')} · {tabs} tabs · {panes} panes{RESET}"
+            f"{BOLD}{marker} {label}{RESET} "
+            f"{DIM}{workspace.get('agent_status', 'unknown')} · "
+            f"{workspace.get('tab_count', 0)} tabs · {workspace.get('pane_count', 0)} panes{RESET}"
         )
+        item_index += 1
         if path:
-            lines.append(f"  {DIM}{path}{RESET}")
-        matched = [agent for cwd, values in by_cwd.items() if cwd == path for agent in values]
-        for agent in matched:
+            lines.append(f"    {DIM}{path}{RESET}")
+        for agent in by_cwd.get(path, []):
             name = agent.get("display_agent") or agent.get("agent") or "shell"
-            lines.append(f"  {status(agent.get('agent_status'))} {name}  {DIM}{agent.get('pane_id', '')}{RESET}")
+            marker = "▶" if item_index == selected else " "
+            lines.append(
+                f"  {marker} {status(agent.get('agent_status'))} {name}  "
+                f"{DIM}{agent.get('pane_id', '')}{RESET}"
+            )
+            item_index += 1
 
     return "\n".join(lines)
 
+def read_key() -> str | None:
+    if os.name == "nt":
+        if not msvcrt.kbhit():
+            return None
+        key = msvcrt.getwch()
+        if key in ("\x00", "\xe0"):
+            return {"H": "up", "P": "down"}.get(msvcrt.getwch())
+        return key
+    ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+    if not ready:
+        return None
+    key = sys.stdin.read(1)
+    if key == "\033":
+        suffix = sys.stdin.read(2)
+        return {"[A": "up", "[B": "down"}.get(suffix, "escape")
+    return key
+
 
 def main() -> int:
-    while True:
-        try:
-            sys.stdout.write("\033[2J\033[H" + render(snapshot()) + "\n")
-        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
-            sys.stdout.write(f"\033[2J\033[H{BOLD}DOLPHIN WORKBOARD{RESET}\n\n{error}\n")
-        sys.stdout.flush()
-        time.sleep(1)
+    old_settings = None
+    if os.name != "nt":
+        old_settings = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+    selected = 0
+    data: dict = {}
+    next_refresh = 0.0
+    try:
+        while True:
+            try:
+                if time.monotonic() >= next_refresh:
+                    data = snapshot()
+                    next_refresh = time.monotonic() + 1.0
+                items = board_items(data)
+                selected = min(selected, max(0, len(items) - 1))
+                sys.stdout.write("\033[2J\033[H" + render(data, selected) + "\n")
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                sys.stdout.write(f"\033[2J\033[H{BOLD}DOLPHIN WORKBOARD{RESET}\n\n{error}\n")
+                next_refresh = time.monotonic() + 1.0
+            sys.stdout.flush()
+            key = read_key()
+            if key == "q":
+                return 0
+            if key in ("j", "down"):
+                selected += 1
+            elif key in ("k", "up"):
+                selected = max(0, selected - 1)
+            elif key in ("\r", "\n") and board_items(data):
+                kind, target = board_items(data)[selected]
+                focus(kind, target)
+    finally:
+        if old_settings is not None:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
 
 if __name__ == "__main__":
