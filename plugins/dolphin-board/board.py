@@ -42,7 +42,8 @@ def snapshot() -> dict:
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or "Herdr server unavailable")
     value = json.loads(result.stdout)
-    return value.get("snapshot", value.get("result", value))
+    envelope = value.get("result", value)
+    return envelope.get("snapshot", envelope)
 
 
 def status(value: str) -> str:
@@ -125,6 +126,15 @@ def render(data: dict, selected: int, message: str = "") -> str:
             item_index += 1
 
     return "\n".join(lines)
+def focus(kind: str, target: str) -> str:
+    binary = os.environ.get("HERDR_BIN_PATH", "herdr")
+    command = ["workspace", "focus", target] if kind == "workspace" else ["agent", "focus", target]
+    result = subprocess.run([binary, *command], check=False, capture_output=True, text=True, timeout=5)
+    if result.returncode:
+        return result.stderr.strip() or f"Focus failed: {target}"
+    return f"Focused {target}"
+
+
 def submit_prompt(target: str, old_settings: list[int] | None) -> str:
     if old_settings is not None:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
@@ -223,8 +233,7 @@ def main() -> int:
                 selected = max(0, selected - 1)
                 message = ""
             elif key in ("\r", "\n") and items:
-                focus(*items[selected])
-                message = f"Focused {items[selected][1]}"
+                message = focus(*items[selected])
             elif key == "p" and items:
                 kind, target = items[selected]
                 message = submit_prompt(target, old_settings) if kind == "agent" else "Select an agent to send a prompt"
