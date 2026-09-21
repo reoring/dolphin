@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+: "${HOME:=/var/lib/dolphin/home}"
+: "${XDG_CONFIG_HOME:=/var/lib/dolphin/config}"
+: "${XDG_STATE_HOME:=/var/lib/dolphin/state}"
+: "${XDG_CACHE_HOME:=/var/lib/dolphin/cache}"
+: "${XDG_RUNTIME_DIR:=/var/lib/dolphin/runtime}"
+: "${HERDR_CONFIG_PATH:=/var/lib/dolphin/config/herdr-dev/config.toml}"
+: "${HERDR_SESSION:=docker-proof}"
+: "${HERDR_SOCKET_PATH:=/var/lib/dolphin/config/herdr-dev/sessions/docker-proof/herdr.sock}"
+
+case "$HERDR_SOCKET_PATH" in
+  /var/lib/dolphin/*) ;;
+  *) echo "refusing non-isolated socket: $HERDR_SOCKET_PATH" >&2; exit 70 ;;
+esac
+
+mkdir -p "$HOME" "$XDG_CONFIG_HOME/herdr-dev" "$XDG_STATE_HOME/herdr-dev" "$XDG_CACHE_HOME/herdr-dev" "$XDG_RUNTIME_DIR"
+if [ ! -f "$HERDR_CONFIG_PATH" ]; then
+  printf '%s\n' 'onboarding = false' '[update]' 'version_check = false' 'manifest_check = false' > "$HERDR_CONFIG_PATH"
+fi
+
+unset HERDR_ENV HERDR_CLIENT_SOCKET_PATH
+exec /usr/local/bin/dolphin --session "$HERDR_SESSION" "$@"
+

@@ -1,0 +1,27 @@
+services:
+  dolphin-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test
+    command: ["server"]
+    environment:
+      HOME: /var/lib/dolphin/home
+      XDG_CONFIG_HOME: /var/lib/dolphin/config
+      XDG_STATE_HOME: /var/lib/dolphin/state
+      XDG_CACHE_HOME: /var/lib/dolphin/cache
+      XDG_RUNTIME_DIR: /var/lib/dolphin/runtime
+      HERDR_CONFIG_PATH: /var/lib/dolphin/config/herdr-dev/config.toml
+      HERDR_SESSION: docker-proof
+      HERDR_SOCKET_PATH: /var/lib/dolphin/config/herdr-dev/sessions/docker-proof/herdr.sock
+    volumes:
+      - /nix/store:/nix/store:ro
+      - ./target/debug/dolphin:/usr/local/bin/dolphin:ro
+      - ./scripts/docker/dolphin-test-entrypoint:/usr/local/bin/dolphin-test-entrypoint:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/dolphin", "--session", "docker-proof", "status", "server"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+
+volumes:
+  dolphin-test-state:

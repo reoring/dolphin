@@ -1,0 +1,7 @@
+FROM debian:bookworm-slim
+
+RUN mkdir -p /var/lib/dolphin /workspace
+
+WORKDIR /workspace
+
+ENTRYPOINT ["/usr/local/bin/dolphin-test-entrypoint"]
