@@ -85,7 +85,7 @@ done
 
 status="$(cli status server)"
 printf '%s\n' "$status"
-python3 -c 'import sys; value = sys.stdin.read(); assert "status: running" in value; assert "/var/lib/dolphin/config/herdr-dev/sessions/docker-proof/herdr.sock" in value' <<EOF
+python3 -c 'import sys; value = sys.stdin.read(); assert "status: running" in value; assert "/var/lib/dolphin/config/herdr/sessions/docker-proof/herdr.sock" in value' <<EOF
 $status
 EOF
 workspace_json="$(cli workspace create --cwd /tmp/dolphin-proof --label 'Docker proof')"

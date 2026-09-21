@@ -10,12 +10,10 @@ services:
       XDG_STATE_HOME: /var/lib/dolphin/state
       XDG_CACHE_HOME: /var/lib/dolphin/cache
       XDG_RUNTIME_DIR: /var/lib/dolphin/runtime
-      HERDR_CONFIG_PATH: /var/lib/dolphin/config/herdr-dev/config.toml
+      HERDR_CONFIG_PATH: /var/lib/dolphin/config/herdr/config.toml
       HERDR_SESSION: docker-proof
-      HERDR_SOCKET_PATH: /var/lib/dolphin/config/herdr-dev/sessions/docker-proof/herdr.sock
+      HERDR_SOCKET_PATH: /var/lib/dolphin/config/herdr/sessions/docker-proof/herdr.sock
     volumes:
-      - /nix/store:/nix/store:ro
-      - ./target/debug/dolphin:/usr/local/bin/dolphin:ro
       - ./scripts/docker/dolphin-test-entrypoint:/usr/local/bin/dolphin-test-entrypoint:ro
       - ./scripts/docker/fake-agent.py:/usr/local/bin/fake-agent.py:ro
       - ./plugins/dolphin-board:/opt/dolphin-board:ro

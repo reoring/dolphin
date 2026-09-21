@@ -1,8 +1,41 @@
-FROM debian:bookworm-slim
+FROM rust:1.96-bookworm AS builder
 
+ARG ZIG_VERSION=0.15.2
+ARG ZIG_URL=https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+ARG ZIG_SHA256=02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        build-essential \
+        ca-certificates \
+        curl \
+        libc6-dev \
+        pkg-config \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup toolchain install 1.96.1 --profile minimal \
+    && curl --fail --silent --show-error --location "$ZIG_URL" --output /tmp/zig.tar.xz \
+    && echo "$ZIG_SHA256  /tmp/zig.tar.xz" | sha256sum --check --status \
+    && tar --extract --file /tmp/zig.tar.xz --directory /opt \
+    && ln -s "/opt/zig-x86_64-linux-$ZIG_VERSION/zig" /usr/local/bin/zig \
+    && rm /tmp/zig.tar.xz
+
+WORKDIR /workspace
+COPY . .
+
+ENV ZIG=/usr/local/bin/zig
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo build --release --locked --bin dolphin
+
+FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install --no-install-recommends --yes python3 \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/target/release/dolphin /usr/local/bin/dolphin
+COPY scripts/docker/dolphin-test-entrypoint /usr/local/bin/dolphin-test-entrypoint
 
 RUN mkdir -p /var/lib/dolphin /workspace
 
