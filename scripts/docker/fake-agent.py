@@ -3,9 +3,18 @@
 
 from __future__ import annotations
 
+import os
 import select
 import sys
 import time
+
+
+# Agent input validates the foreground process identity, not only report-agent.
+# Re-exec makes the supported hint visible in Linux /proc/<pid>/environ.
+if os.environ.get("HERDR_AGENT") != "codex":
+    environment = os.environ.copy()
+    environment["HERDR_AGENT"] = "codex"
+    os.execve(sys.executable, ["python3", *sys.argv], environment)
 
 print("FAKE_AGENT_READY", flush=True)
 while True:
