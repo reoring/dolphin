@@ -1,0 +1,42 @@
+name: Docker isolation
+
+on:
+  pull_request:
+    paths-ignore:
+      - "website/**"
+      - "docs/versions/**"
+  push:
+    branches: [master]
+    paths-ignore:
+      - "website/**"
+      - "docs/versions/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-isolation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build Docker isolation image
+        run: docker compose -f compose.test.yaml build
+
+      - name: Run Docker isolation proof
+        run: scripts/docker/test-dolphin-isolated.sh
+
+      - name: Tear down Docker isolation
+        if: always()
+        run: docker compose -f compose.test.yaml down -v --remove-orphans
