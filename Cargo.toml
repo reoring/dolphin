@@ -20,6 +20,20 @@ include = [
     "Cargo.toml",
 ]
 
+autobins = false
+
+[[bin]]
+name = "herdr"
+path = "src/main.rs"
+
+[[bin]]
+name = "dolphin"
+path = "src/main.rs"
+
+[package.metadata.dolphin]
+runtime_compatibility = "herdr-0.8"
+workspace_model = "herdr"
+
 [dependencies]
 base64 = "0.22.1"
 bincode = { version = "2", features = ["serde"] }
