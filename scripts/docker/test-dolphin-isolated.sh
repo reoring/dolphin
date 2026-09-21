@@ -28,11 +28,9 @@ printf '%s\n' "$status"
 python3 -c 'import sys; value = sys.stdin.read(); assert "status: running" in value; assert "/var/lib/dolphin/config/herdr-dev/sessions/docker-proof/herdr.sock" in value' <<EOF
 $status
 EOF
-created="$(cli workspace create --cwd /tmp/dolphin-proof --label 'Docker proof')"
-printf '%s\n' "$created"
-python3 -c 'import sys; assert "workspace_created" in sys.stdin.read()' <<EOF
-$created
-EOF
+workspace_json="$(cli workspace create --cwd /tmp/dolphin-proof --label 'Docker proof')"
+printf '%s\n' "$workspace_json"
+printf '%s\n' "$workspace_json" | python3 -c 'import json,sys; assert json.load(sys.stdin)["result"]["type"] == "workspace_created"'
 
 snapshot="$(cli api snapshot)"
 printf '%s\n' "$snapshot" | python3 -c '

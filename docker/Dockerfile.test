@@ -1,5 +1,9 @@
 FROM debian:bookworm-slim
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes python3 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /var/lib/dolphin /workspace
 
 WORKDIR /workspace

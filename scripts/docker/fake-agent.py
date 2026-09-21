@@ -3,12 +3,18 @@
 
 from __future__ import annotations
 
-import os
+import select
 import sys
 import time
 
 print("FAKE_AGENT_READY", flush=True)
-for line in sys.stdin:
+while True:
+    ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+    if not ready:
+        continue
+    line = sys.stdin.readline()
+    if not line:
+        continue
     prompt = line.rstrip("\n")
     print(f"FAKE_AGENT_WORKING {prompt}", flush=True)
     time.sleep(0.05)
