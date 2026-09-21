@@ -1,0 +1,12 @@
+id = "reoring.dolphin-board"
+name = "Dolphin Workboard"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "Show workspaces and agent status in a focused Herdr pane."
+platforms = ["linux", "macos", "windows"]
+
+[[panes]]
+id = "board"
+title = "Dolphin Workboard"
+placement = "overlay"
+command = ["python3", "board.py"]
