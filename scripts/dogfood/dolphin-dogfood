@@ -1,0 +1,96 @@
+#!/bin/sh
+# Launch Dolphin against a fully isolated Herdr runtime for real-agent dogfooding.
+#
+# Isolation: config, state, cache, worktrees, socket, and session name live under
+# $DOLPHIN_DOGFOOD_ROOT (default ~/.local/state/dolphin-dogfood). HOME is left
+# untouched so real agents (codex, claude) keep their own credentials.
+#
+# Usage:
+#   scripts/dogfood/dolphin-dogfood check        # print resolved isolation, no launch
+#   scripts/dogfood/dolphin-dogfood run          # exec the Dolphin TUI (needs a terminal
+#                                                #   OUTSIDE any running Herdr pane)
+#   scripts/dogfood/dolphin-dogfood cli <args>   # run a Dolphin CLI command in the sandbox
+#   scripts/dogfood/dolphin-dogfood link-board   # link the Workboard plugin into the sandbox
+set -eu
+
+repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
+bin="${DOLPHIN_BIN:-$repo_root/target/debug/dolphin}"
+root="${DOLPHIN_DOGFOOD_ROOT:-$HOME/.local/state/dolphin-dogfood}"
+session="${DOLPHIN_DOGFOOD_SESSION:-dolphin-dogfood}"
+
+fail() { echo "dolphin-dogfood: $*" >&2; exit 70; }
+
+# Fail closed: never run inside or against another Herdr.
+[ -z "${HERDR_ENV:-}" ] || fail "HERDR_ENV is set; run from a terminal outside any Herdr pane"
+[ -z "${HERDR_SOCKET_PATH:-}" ] || fail "HERDR_SOCKET_PATH is set; refusing to inherit a socket"
+[ -z "${HERDR_CLIENT_SOCKET_PATH:-}" ] || fail "HERDR_CLIENT_SOCKET_PATH is set; refusing to inherit a socket"
+[ -x "$bin" ] || fail "missing executable: $bin"
+case "$root" in
+  "$HOME"/.config|"$HOME"/.config/*) fail "isolation root must not be under ~/.config" ;;
+  /*) ;;
+  *) fail "isolation root must be absolute: $root" ;;
+esac
+
+config_home="$root/config"
+state_home="$root/state"
+cache_home="$root/cache"
+worktrees="$root/worktrees"
+mkdir -p "$config_home" "$state_home" "$cache_home" "$worktrees"
+
+# Debug builds use app dir herdr-dev, release builds use herdr; ask the binary.
+app_dir="$(XDG_CONFIG_HOME="$config_home" "$bin" --session "$session" status server 2>/dev/null \
+  | sed -n 's/^socket: *\(.*\)\/sessions\/.*$/\1/p' | head -n 1)"
+[ -n "$app_dir" ] || app_dir="$config_home/herdr-dev"
+config_path="$app_dir/config.toml"
+socket_path="$app_dir/sessions/$session/herdr.sock"
+case "$socket_path" in
+  "$root"/*) ;;
+  *) fail "resolved socket is outside isolation root: $socket_path" ;;
+esac
+
+if [ ! -f "$config_path" ]; then
+  mkdir -p "$app_dir"
+  cat > "$config_path" <<EOF
+onboarding = false
+
+[update]
+version_check = false
+manifest_check = false
+
+[worktrees]
+directory = "$worktrees"
+EOF
+fi
+
+export XDG_CONFIG_HOME="$config_home"
+export XDG_STATE_HOME="$state_home"
+export XDG_CACHE_HOME="$cache_home"
+export HERDR_CONFIG_PATH="$config_path"
+unset HERDR_ENV HERDR_SOCKET_PATH HERDR_CLIENT_SOCKET_PATH
+
+cmd="${1:-check}"
+[ $# -eq 0 ] || shift
+case "$cmd" in
+  check)
+    echo "binary:     $bin"
+    echo "session:    $session"
+    echo "config:     $config_path"
+    echo "socket:     $socket_path"
+    echo "worktrees:  $worktrees"
+    echo "state:      $state_home"
+    "$bin" --session "$session" status server || true
+    ;;
+  run)
+    [ -t 0 ] || fail "run needs an interactive terminal"
+    exec "$bin" --session "$session"
+    ;;
+  cli)
+    exec "$bin" --session "$session" "$@"
+    ;;
+  link-board)
+    exec "$bin" --session "$session" plugin link "$repo_root/plugins/dolphin-board" --enabled
+    ;;
+  *)
+    fail "unknown command: $cmd (check|run|cli|link-board)"
+    ;;
+esac
