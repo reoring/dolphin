@@ -17,6 +17,7 @@ services:
       - /nix/store:/nix/store:ro
       - ./target/debug/dolphin:/usr/local/bin/dolphin:ro
       - ./scripts/docker/dolphin-test-entrypoint:/usr/local/bin/dolphin-test-entrypoint:ro
+      - ./scripts/docker/fake-agent.py:/usr/local/bin/fake-agent.py:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/dolphin", "--session", "docker-proof", "status", "server"]
       interval: 1s
