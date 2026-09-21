@@ -59,10 +59,10 @@ readiness; agent ownership reported as `codex`; prompt delivery and agent output
 Workboard snapshot preview; plugin link and focused overlay pane; visible
 Workboard rendering; `j` selection; `o` output view; `p` prompt forwarding and
 output; `k` workspace selection; `n` new task worktree creation with
-`DOLPHIN_AGENT_COMMAND` starting the new root agent; and `q` pane exit.
-Success prints the snapshot, ownership, prompt/output and preview `: ok` markers,
-five `workboard smoke: ok` markers, `new task: ok`, and finally
-`Docker Dolphin isolation: ok`.
+`DOLPHIN_AGENT_COMMAND` starting the new root agent; `d` changed-file review;
+`D` split-pane diff review and output; and `q` pane exit.
+Success prints the snapshot, ownership, prompt/output and preview `: ok` markers; five
+`workboard smoke: ok` markers, `new task: ok`, `diff review: ok`, and finally `Docker Dolphin isolation: ok`.
 
 The fake agent emits `FAKE_AGENT_READY`, then `FAKE_AGENT_WORKING <prompt>` and
 `FAKE_AGENT_DONE <prompt>`. It self-reexecs as `python3` with `HERDR_AGENT=codex`

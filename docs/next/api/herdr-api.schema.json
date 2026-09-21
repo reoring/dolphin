@@ -1135,6 +1135,12 @@
         },
         "WorkspaceWorktreeInfo": {
           "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "checkout_path": {
               "type": "string"
             },
@@ -4283,6 +4289,12 @@
         },
         "WorkspaceWorktreeInfo": {
           "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "checkout_path": {
               "type": "string"
             },
@@ -9994,6 +10006,12 @@
         },
         "WorkspaceWorktreeInfo": {
           "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "checkout_path": {
               "type": "string"
             },

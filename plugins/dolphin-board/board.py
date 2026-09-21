@@ -95,6 +95,81 @@ def git_summary(path: str) -> str:
         return ""
     changed = len([line for line in result.stdout.splitlines() if line.strip()])
     return f"{changed} changed" if changed else "clean"
+def git_changed_files(path: str) -> str:
+    if not path:
+        return "No checkout path"
+    result = subprocess.run(
+        ["git", "-C", path, "status", "--short"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    if result.returncode:
+        return result.stderr.strip() or "Git status failed"
+    changes = []
+    for line in result.stdout.splitlines()[:8]:
+        if not line.strip():
+            continue
+        status_code = line[:2].strip() or "?"
+        changes.append(f"{status_code} {line[2:].strip()}")
+    return "\n".join(changes) if changes else "No changed files"
+
+
+def open_diff(workspace: dict, data: dict) -> str:
+    worktree = workspace.get("worktree") or {}
+    path = worktree.get("checkout_path", "")
+    if not path:
+        return "Diff failed: workspace checkout unavailable"
+    workspace_id = workspace.get("workspace_id")
+    target_pane = next(
+        (
+            pane.get("pane_id")
+            for pane in data.get("panes", [])
+            if pane.get("workspace_id") == workspace_id and pane.get("pane_id")
+        ),
+        None,
+    )
+    if not target_pane:
+        return "Diff failed: workspace pane unavailable"
+    binary = os.environ.get("HERDR_BIN_PATH", "herdr")
+    split = subprocess.run(
+        [
+            binary,
+            "pane",
+            "split",
+            target_pane,
+            "--direction",
+            "right",
+            "--no-focus",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if split.returncode:
+        return split.stderr.strip() or "Diff split failed"
+    try:
+        value = json.loads(split.stdout)
+        pane = value.get("result", value)["pane"]
+        diff_pane = pane["pane_id"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return split.stderr.strip() or "Diff split returned invalid JSON"
+
+    command = f"git -C {shlex.quote(path)} --no-pager diff"
+    run = subprocess.run(
+        [binary, "pane", "run", diff_pane, command],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if run.returncode:
+        return run.stderr.strip() or "Diff command failed"
+    return f"Diff opened in {diff_pane}"
+
+
 
 
 def render(data: dict, selected: int, message: str = "") -> str:
@@ -103,11 +178,12 @@ def render(data: dict, selected: int, message: str = "") -> str:
 
     lines = [
         f"{BOLD}DOLPHIN WORKBOARD{RESET}  "
-        f"{DIM}↑/↓ select · enter focus · n new · p prompt · o output · q close{RESET}",
+        f"{DIM}↑/↓ select · enter focus · n new · p prompt · o output · "
+        f"d files · D diff · q close{RESET}",
         "",
     ]
     if message:
-        lines.append(f"{DIM}{message}{RESET}")
+        lines.extend(f"{DIM}{line}{RESET}" for line in message.splitlines())
     if not workspaces:
         lines.append(f"{DIM}No workspaces.{RESET}")
         return "\n".join(lines)
@@ -307,6 +383,7 @@ def main() -> int:
     selected = 0
     selected_item: tuple[str, str] | None = None
     message = ""
+    files_visible = False
     data: dict = {}
     next_refresh = 0.0
     try:
@@ -331,17 +408,22 @@ def main() -> int:
             key = read_key()
             if key == "q":
                 return 0
+            if key is not None and key != "d":
+                message = ""
+                files_visible = False
             if key in ("j", "down"):
                 selected = min(selected + 1, max(0, len(items) - 1))
-                message = ""
             elif key in ("k", "up"):
                 selected = max(0, selected - 1)
-                message = ""
             elif key in ("\r", "\n") and items:
                 message = focus(*items[selected])
             elif key == "p" and items:
                 kind, target = items[selected]
-                message = submit_prompt(target, old_settings) if kind == "agent" else "Select an agent to send a prompt"
+                message = (
+                    submit_prompt(target, old_settings)
+                    if kind == "agent"
+                    else "Select an agent to send a prompt"
+                )
             elif key == "n" and items:
                 kind, target = items[selected]
                 if kind == "workspace":
@@ -366,6 +448,51 @@ def main() -> int:
             elif key == "o" and items:
                 kind, target = items[selected]
                 message = output_preview(target) if kind == "agent" else "Select an agent to read output"
+            elif key == "d":
+                if not items:
+                    files_visible = False
+                else:
+                    kind, target = items[selected]
+                    if kind != "workspace":
+                        message = "Select a workspace to list changed files"
+                        files_visible = False
+                    elif files_visible:
+                        message = ""
+                        files_visible = False
+                    else:
+                        workspace = next(
+                            (
+                                workspace
+                                for workspace in data.get("workspaces", [])
+                                if workspace.get("workspace_id") == target
+                            ),
+                            None,
+                        )
+                        message = (
+                            git_changed_files((workspace.get("worktree") or {}).get("checkout_path", ""))
+                            if workspace
+                            else "Select a workspace to list changed files"
+                        )
+                        files_visible = True
+            elif key == "D":
+                if items:
+                    kind, target = items[selected]
+                    if kind == "workspace":
+                        workspace = next(
+                            (
+                                workspace
+                                for workspace in data.get("workspaces", [])
+                                if workspace.get("workspace_id") == target
+                            ),
+                            None,
+                        )
+                        message = (
+                            open_diff(workspace, data)
+                            if workspace
+                            else "Select a workspace to open a diff"
+                        )
+                    else:
+                        message = "Select a workspace to open a diff"
     finally:
         if old_settings is not None:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)

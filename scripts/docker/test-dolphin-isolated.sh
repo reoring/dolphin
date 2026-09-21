@@ -94,8 +94,8 @@ docker_fixture="$(
     git init -b main /tmp/dolphin-proof
     git -C /tmp/dolphin-proof config user.email docker-proof@example.invalid
     git -C /tmp/dolphin-proof config user.name "Docker Proof"
-    printf "%s\n" "docker proof" > /tmp/dolphin-proof/README
-    git -C /tmp/dolphin-proof add README
+    printf "%s\n" "docker proof" > /tmp/dolphin-proof/README.md
+    git -C /tmp/dolphin-proof add README.md
     git -C /tmp/dolphin-proof commit -m "Initial Docker proof"
   '
 )"
@@ -329,6 +329,7 @@ created = [
 ]
 assert len(created) == 1
 worktree = created[0]["worktree"]
+assert worktree["branch"] == "feature-proof"
 assert worktree["checkout_path"] != "/tmp/dolphin-proof"
 print("new workspace snapshot: ok")
 '
@@ -409,7 +410,118 @@ import sys
 value = json.load(sys.stdin)
 assert value["result"]["matched_line"] == "FAKE_AGENT_READY"
 '
+branch_visible=0
+for _ in $(seq 1 50); do
+  board_screen="$(cli pane read "$board_pane" --source visible --format text 2>/dev/null || true)"
+  if printf '%s\n' "$board_screen" | python3 -c '
+import sys
+
+value = sys.stdin.read()
+assert any(line.count("feature-proof") >= 2 for line in value.splitlines())
+'; then
+    branch_visible=1
+    break
+  fi
+  sleep 0.1
+done
+printf '%s\n' "$board_screen"
+printf '%s\n' "$branch_visible" | python3 -c 'import sys; assert sys.stdin.read().strip() == "1"'
 echo "new task: ok"
+initial_pane_count="$(
+  printf '%s\n' "$new_snapshot" | NEW_WORKSPACE_ID="$new_workspace_id" python3 -c '
+import json
+import os
+import sys
+
+snapshot = json.load(sys.stdin)["result"]["snapshot"]
+workspace_id = os.environ["NEW_WORKSPACE_ID"]
+print(sum(pane["workspace_id"] == workspace_id for pane in snapshot["panes"]))
+'
+)"
+$compose exec --no-TTY dolphin-server env NEW_CHECKOUT_PATH="$new_checkout_path" \
+  sh -eu -c 'printf "%s\n" change >> "$NEW_CHECKOUT_PATH/README.md"'
+cli pane send-keys "$board_pane" k
+w2_selected=0
+for _ in $(seq 1 3); do
+  board_screen="$(cli pane read "$board_pane" --source visible --format text 2>/dev/null || true)"
+  if printf '%s\n' "$board_screen" | python3 -c '
+import sys
+
+value = sys.stdin.read()
+raise SystemExit(
+    0
+    if any(
+        "▶" in line and "feature-proof feature-proof" in line
+        for line in value.splitlines()
+    )
+    else 1
+)
+'; then
+    w2_selected=1
+    break
+  fi
+  cli pane send-keys "$board_pane" j
+  sleep 0.1
+done
+printf '%s\n' "$board_screen"
+printf '%s\n' "$w2_selected" | python3 -c 'import sys; assert sys.stdin.read().strip() == "1"'
+cli pane send-keys "$board_pane" d
+if ! diff_files_wait="$(cli pane wait-output "$board_pane" \
+  --source visible --match "M README.md" --timeout 5000 2>&1)"; then
+  printf '%s\n' "$diff_files_wait" >&2
+  exit 1
+fi
+printf '%s\n' "$diff_files_wait"
+diff_files_screen="$(cli pane read "$board_pane" --source visible --format text)"
+printf '%s\n' "$diff_files_screen"
+printf '%s\n' "$diff_files_screen" | python3 -c '
+import sys
+
+assert "M README.md" in sys.stdin.read()
+'
+cli pane send-keys "$board_pane" D
+diff_pane=""
+for _ in $(seq 1 50); do
+  diff_snapshot="$(cli api snapshot)"
+  if candidate="$(
+    printf '%s\n' "$diff_snapshot" | \
+      INITIAL_PANE_COUNT="$initial_pane_count" NEW_ROOT_PANE="$new_root_pane" \
+      NEW_WORKSPACE_ID="$new_workspace_id" python3 -c '
+import json
+import os
+import sys
+
+snapshot = json.load(sys.stdin)["result"]["snapshot"]
+workspace_id = os.environ["NEW_WORKSPACE_ID"]
+panes = [pane for pane in snapshot["panes"] if pane["workspace_id"] == workspace_id]
+if len(panes) <= int(os.environ["INITIAL_PANE_COUNT"]):
+    raise SystemExit(1)
+print(next(pane["pane_id"] for pane in panes if pane["pane_id"] != os.environ["NEW_ROOT_PANE"]))
+'
+  )"; then
+    diff_pane="$candidate"
+    break
+  fi
+  sleep 0.1
+done
+printf '%s\n' "$diff_snapshot"
+printf '%s\n' "$diff_pane" | python3 -c 'import sys; assert sys.stdin.read().strip()'
+if ! diff_wait="$(cli pane wait-output "$diff_pane" \
+  --source visible --match "+change" --timeout 5000 2>&1)"; then
+  printf '%s\n' "$diff_wait" >&2
+  exit 1
+fi
+printf '%s\n' "$diff_wait"
+printf '%s\n' "$diff_wait" | python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin)
+assert "+change" in value["result"]["matched_line"]
+'
+diff_close="$(cli pane close "$diff_pane")"
+printf '%s\n' "$diff_close"
+echo "diff review: ok"
 
 cli pane send-keys "$board_pane" q
 board_exited=0

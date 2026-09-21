@@ -717,6 +717,7 @@ fn worktree_request_and_response_round_trip() {
                     repo_name: "herdr".into(),
                     repo_root: "/repo/herdr".into(),
                     checkout_path: "/worktrees/herdr/worktree-api".into(),
+                    branch: Some("worktree/api".into()),
                     is_linked_worktree: true,
                 }),
             },
@@ -803,6 +804,7 @@ fn worktree_lifecycle_events_round_trip() {
             repo_name: "herdr".into(),
             repo_root: "/repo/herdr".into(),
             checkout_path: "/worktrees/herdr/worktree-api".into(),
+            branch: Some("worktree/api".into()),
             is_linked_worktree: true,
         }),
     };

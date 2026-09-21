@@ -511,6 +511,7 @@ impl App {
                     repo_name: space.label.clone(),
                     repo_root: space.repo_root.display().to_string(),
                     checkout_path: space.checkout_path.display().to_string(),
+                    branch: ws.cached_git_branch.clone(),
                     is_linked_worktree: space.is_linked_worktree,
                 }),
         }
