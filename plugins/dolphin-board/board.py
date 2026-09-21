@@ -65,7 +65,23 @@ def board_items(data: dict) -> list[tuple[str, str]]:
     return items
 
 
-def render(data: dict, selected: int) -> str:
+def git_summary(path: str) -> str:
+    if not path:
+        return ""
+    result = subprocess.run(
+        ["git", "-C", path, "status", "--short"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    if result.returncode:
+        return ""
+    changed = len([line for line in result.stdout.splitlines() if line.strip()])
+    return f"{changed} changed" if changed else "clean"
+
+
+def render(data: dict, selected: int, message: str = "") -> str:
     workspaces = data.get("workspaces", [])
     agents = data.get("agents", [])
     by_cwd: dict[str, list[dict]] = {}
@@ -75,9 +91,11 @@ def render(data: dict, selected: int) -> str:
 
     lines = [
         f"{BOLD}DOLPHIN WORKBOARD{RESET}  "
-        f"{DIM}↑/↓ select · enter focus · q close · refresh: 1s{RESET}",
+        f"{DIM}↑/↓ select · enter focus · p prompt · o output · q close{RESET}",
         "",
     ]
+    if message:
+        lines.append(f"{DIM}{message}{RESET}")
     if not workspaces:
         lines.append(f"{DIM}No workspaces.{RESET}")
         return "\n".join(lines)
@@ -91,7 +109,8 @@ def render(data: dict, selected: int) -> str:
         lines.append(
             f"{BOLD}{marker} {label}{RESET} "
             f"{DIM}{workspace.get('agent_status', 'unknown')} · "
-            f"{workspace.get('tab_count', 0)} tabs · {workspace.get('pane_count', 0)} panes{RESET}"
+            f"{workspace.get('tab_count', 0)} tabs · "
+            f"{workspace.get('pane_count', 0)} panes · {git_summary(path)}{RESET}"
         )
         item_index += 1
         if path:
@@ -106,6 +125,46 @@ def render(data: dict, selected: int) -> str:
             item_index += 1
 
     return "\n".join(lines)
+def submit_prompt(target: str, old_settings: list[int] | None) -> str:
+    if old_settings is not None:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+    try:
+        sys.stdout.write("\nPrompt: ")
+        sys.stdout.flush()
+        text = input()
+    except (EOFError, KeyboardInterrupt):
+        return "Prompt cancelled"
+    finally:
+        if old_settings is not None:
+            tty.setcbreak(sys.stdin.fileno())
+    if not text.strip():
+        return "Prompt ignored: empty input"
+    binary = os.environ.get("HERDR_BIN_PATH", "herdr")
+    result = subprocess.run(
+        [binary, "agent", "prompt", target, text],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode:
+        return result.stderr.strip() or "Prompt failed"
+    return f"Prompt submitted to {target}"
+
+
+def output_preview(target: str) -> str:
+    binary = os.environ.get("HERDR_BIN_PATH", "herdr")
+    result = subprocess.run(
+        [binary, "agent", "read", target, "--lines", "8", "--format", "text"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if result.returncode:
+        return result.stderr.strip() or "Output read failed"
+    text = " ".join(result.stdout.split())
+    return f"Output: {text[-180:]}" if text else "Output: empty"
 
 def read_key() -> str | None:
     if os.name == "nt":
@@ -131,6 +190,8 @@ def main() -> int:
         old_settings = termios.tcgetattr(sys.stdin)
         tty.setcbreak(sys.stdin.fileno())
     selected = 0
+    selected_item: tuple[str, str] | None = None
+    message = ""
     data: dict = {}
     next_refresh = 0.0
     try:
@@ -138,10 +199,16 @@ def main() -> int:
             try:
                 if time.monotonic() >= next_refresh:
                     data = snapshot()
+                    items = board_items(data)
+                    if selected_item in items:
+                        selected = items.index(selected_item)
+                    else:
+                        selected = min(selected, max(0, len(items) - 1))
                     next_refresh = time.monotonic() + 1.0
                 items = board_items(data)
                 selected = min(selected, max(0, len(items) - 1))
-                sys.stdout.write("\033[2J\033[H" + render(data, selected) + "\n")
+                selected_item = items[selected] if items else None
+                sys.stdout.write("\033[2J\033[H" + render(data, selected, message) + "\n")
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                 sys.stdout.write(f"\033[2J\033[H{BOLD}DOLPHIN WORKBOARD{RESET}\n\n{error}\n")
                 next_refresh = time.monotonic() + 1.0
@@ -150,12 +217,20 @@ def main() -> int:
             if key == "q":
                 return 0
             if key in ("j", "down"):
-                selected += 1
+                selected = min(selected + 1, max(0, len(items) - 1))
+                message = ""
             elif key in ("k", "up"):
                 selected = max(0, selected - 1)
-            elif key in ("\r", "\n") and board_items(data):
-                kind, target = board_items(data)[selected]
-                focus(kind, target)
+                message = ""
+            elif key in ("\r", "\n") and items:
+                focus(*items[selected])
+                message = f"Focused {items[selected][1]}"
+            elif key == "p" and items:
+                kind, target = items[selected]
+                message = submit_prompt(target, old_settings) if kind == "agent" else "Select an agent to send a prompt"
+            elif key == "o" and items:
+                kind, target = items[selected]
+                message = output_preview(target) if kind == "agent" else "Select an agent to read output"
     finally:
         if old_settings is not None:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
