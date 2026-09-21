@@ -52,17 +52,31 @@ def status(value: str) -> str:
     return f"{color}{value.upper():7}{RESET}"
 
 
+def _workspace_agents(workspace: dict, agents: list[dict]) -> list[dict]:
+    workspace_id = workspace.get("workspace_id")
+    path = (workspace.get("worktree") or {}).get("checkout_path", "")
+    linked = []
+    for agent in agents:
+        if not agent.get("pane_id"):
+            continue
+        if agent.get("workspace_id") == workspace_id:
+            linked.append(agent)
+            continue
+        if not agent.get("workspace_id"):
+            cwd = agent.get("cwd") or agent.get("foreground_cwd") or ""
+            if cwd == path:
+                linked.append(agent)
+    return linked
+
+
 def board_items(data: dict) -> list[tuple[str, str]]:
     items: list[tuple[str, str]] = []
     workspaces = data.get("workspaces", [])
     agents = data.get("agents", [])
     for workspace in workspaces:
         items.append(("workspace", workspace.get("workspace_id", "")))
-        path = (workspace.get("worktree") or {}).get("checkout_path", "")
-        for agent in agents:
-            cwd = agent.get("cwd") or agent.get("foreground_cwd") or ""
-            if cwd == path and agent.get("pane_id"):
-                items.append(("agent", agent["pane_id"]))
+        for agent in _workspace_agents(workspace, agents):
+            items.append(("agent", agent["pane_id"]))
     return items
 
 
@@ -85,10 +99,6 @@ def git_summary(path: str) -> str:
 def render(data: dict, selected: int, message: str = "") -> str:
     workspaces = data.get("workspaces", [])
     agents = data.get("agents", [])
-    by_cwd: dict[str, list[dict]] = {}
-    for agent in agents:
-        cwd = agent.get("cwd") or agent.get("foreground_cwd") or ""
-        by_cwd.setdefault(cwd, []).append(agent)
 
     lines = [
         f"{BOLD}DOLPHIN WORKBOARD{RESET}  "
@@ -116,7 +126,7 @@ def render(data: dict, selected: int, message: str = "") -> str:
         item_index += 1
         if path:
             lines.append(f"    {DIM}{path}{RESET}")
-        for agent in by_cwd.get(path, []):
+        for agent in _workspace_agents(workspace, agents):
             name = agent.get("display_agent") or agent.get("agent") or "shell"
             marker = "▶" if item_index == selected else " "
             lines.append(
@@ -126,6 +136,8 @@ def render(data: dict, selected: int, message: str = "") -> str:
             item_index += 1
 
     return "\n".join(lines)
+
+
 def focus(kind: str, target: str) -> str:
     binary = os.environ.get("HERDR_BIN_PATH", "herdr")
     command = ["workspace", "focus", target] if kind == "workspace" else ["agent", "focus", target]
@@ -165,7 +177,18 @@ def submit_prompt(target: str, old_settings: list[int] | None) -> str:
 def output_preview(target: str) -> str:
     binary = os.environ.get("HERDR_BIN_PATH", "herdr")
     result = subprocess.run(
-        [binary, "agent", "read", target, "--lines", "8", "--format", "text"],
+        [
+            binary,
+            "agent",
+            "read",
+            target,
+            "--source",
+            "visible",
+            "--lines",
+            "8",
+            "--format",
+            "text",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -173,7 +196,8 @@ def output_preview(target: str) -> str:
     )
     if result.returncode:
         return result.stderr.strip() or "Output read failed"
-    text = " ".join(result.stdout.split())
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    text = " ".join(lines)
     return f"Output: {text[-180:]}" if text else "Output: empty"
 
 def read_key() -> str | None:
