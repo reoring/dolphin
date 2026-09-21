@@ -88,10 +88,21 @@ printf '%s\n' "$status"
 python3 -c 'import sys; value = sys.stdin.read(); assert "status: running" in value; assert "/var/lib/dolphin/config/herdr/sessions/docker-proof/herdr.sock" in value' <<EOF
 $status
 EOF
+docker_fixture="$(
+  $compose exec --no-TTY dolphin-server sh -eu -c '
+    rm -rf /tmp/dolphin-proof
+    git init -b main /tmp/dolphin-proof
+    git -C /tmp/dolphin-proof config user.email docker-proof@example.invalid
+    git -C /tmp/dolphin-proof config user.name "Docker Proof"
+    printf "%s\n" "docker proof" > /tmp/dolphin-proof/README
+    git -C /tmp/dolphin-proof add README
+    git -C /tmp/dolphin-proof commit -m "Initial Docker proof"
+  '
+)"
+printf '%s\n' "$docker_fixture"
 workspace_json="$(cli workspace create --cwd /tmp/dolphin-proof --label 'Docker proof')"
 printf '%s\n' "$workspace_json"
 printf '%s\n' "$workspace_json" | python3 -c 'import json,sys; assert json.load(sys.stdin)["result"]["type"] == "workspace_created"'
-
 snapshot="$(cli api snapshot)"
 printf '%s\n' "$snapshot" | python3 -c '
 import json, sys
@@ -132,7 +143,7 @@ value = json.load(sys.stdin)
 agent = value["result"]["snapshot"]["agents"][0]
 assert agent["pane_id"] == "w1:p1"
 assert agent["agent_status"] == "idle"
-assert agent["cwd"] == "/var/lib/dolphin/home"
+assert agent["cwd"] == "/tmp/dolphin-proof"
 print("agent ownership: ok")
 '
 
@@ -266,6 +277,139 @@ value = json.load(sys.stdin)
 assert "FAKE_AGENT_DONE board prompt" in value["result"]["matched_line"]
 '
 echo "workboard smoke: ok"
+cli pane send-keys "$board_pane" k
+cli pane send-keys "$board_pane" n
+cli pane send-text "$board_pane" "feature-proof"
+cli pane send-keys "$board_pane" enter
+if ! new_task_wait="$(cli pane wait-output "$board_pane" \
+  --source visible --match "Created feature-proof" --timeout 5000 2>&1)"; then
+  printf '%s\n' "$new_task_wait" >&2
+  exit 1
+fi
+printf '%s\n' "$new_task_wait"
+snapshot_ready=0
+for _ in $(seq 1 50); do
+  new_snapshot="$(cli api snapshot)"
+  if printf '%s\n' "$new_snapshot" | python3 -c '
+import json
+import sys
+
+snapshot = json.load(sys.stdin)["result"]["snapshot"]
+created = [
+    workspace
+    for workspace in snapshot["workspaces"]
+    if workspace.get("label") == "feature-proof"
+]
+raise SystemExit(
+    0
+    if len(snapshot["workspaces"]) == 2
+    and len(created) == 1
+    and created[0]["worktree"]["checkout_path"] != "/tmp/dolphin-proof"
+    else 1
+)
+'; then
+    snapshot_ready=1
+    break
+  fi
+  sleep 0.1
+done
+printf '%s\n' "$new_snapshot"
+printf '%s\n' "$snapshot_ready" | python3 -c 'import sys; assert sys.stdin.read().strip() == "1"'
+printf '%s\n' "$new_snapshot" | python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin)
+snapshot = value["result"]["snapshot"]
+assert len(snapshot["workspaces"]) == 2
+created = [
+    workspace
+    for workspace in snapshot["workspaces"]
+    if workspace.get("label") == "feature-proof"
+]
+assert len(created) == 1
+worktree = created[0]["worktree"]
+assert worktree["checkout_path"] != "/tmp/dolphin-proof"
+print("new workspace snapshot: ok")
+'
+new_workspace_id="$(
+  printf '%s\n' "$new_snapshot" | python3 -c '
+import json
+import sys
+
+snapshot = json.load(sys.stdin)["result"]["snapshot"]
+workspace = next(
+    workspace
+    for workspace in snapshot["workspaces"]
+    if workspace.get("label") == "feature-proof"
+)
+print(workspace["workspace_id"])
+'
+)"
+new_checkout_path="$(
+  printf '%s\n' "$new_snapshot" | python3 -c '
+import json
+import sys
+
+snapshot = json.load(sys.stdin)["result"]["snapshot"]
+workspace = next(
+    workspace
+    for workspace in snapshot["workspaces"]
+    if workspace.get("label") == "feature-proof"
+)
+print(workspace["worktree"]["checkout_path"])
+'
+)"
+new_root_pane="$(
+  printf '%s\n' "$new_snapshot" | NEW_WORKSPACE_ID="$new_workspace_id" python3 -c '
+import json
+import os
+import sys
+
+snapshot = json.load(sys.stdin)["result"]["snapshot"]
+workspace_id = os.environ["NEW_WORKSPACE_ID"]
+print(next(pane["pane_id"] for pane in snapshot["panes"] if pane["workspace_id"] == workspace_id))
+'
+)"
+worktree_list_json="$(cli worktree list --cwd /tmp/dolphin-proof)"
+printf '%s\n' "$worktree_list_json"
+printf '%s\n' "$worktree_list_json" | NEW_CHECKOUT_PATH="$new_checkout_path" NEW_WORKSPACE_ID="$new_workspace_id" python3 -c '
+import json
+import os
+import sys
+
+value = json.load(sys.stdin)
+worktree = next(
+    worktree
+    for worktree in value["result"]["worktrees"]
+    if worktree.get("open_workspace_id") == os.environ["NEW_WORKSPACE_ID"]
+)
+assert worktree["branch"] == "feature-proof"
+assert worktree["path"] == os.environ["NEW_CHECKOUT_PATH"]
+print("worktree branch/path: ok")
+'
+git_worktrees="$($compose exec --no-TTY dolphin-server git -C /tmp/dolphin-proof worktree list)"
+printf '%s\n' "$git_worktrees"
+printf '%s\n' "$git_worktrees" | NEW_CHECKOUT_PATH="$new_checkout_path" python3 -c '
+import os
+import sys
+
+assert os.environ["NEW_CHECKOUT_PATH"] in sys.stdin.read()
+'
+if ! new_agent_wait="$(cli pane wait-output "$new_root_pane" \
+  --match FAKE_AGENT_READY --timeout 5000 2>&1)"; then
+  printf '%s\n' "$new_agent_wait" >&2
+  exit 1
+fi
+printf '%s\n' "$new_agent_wait"
+printf '%s\n' "$new_agent_wait" | python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin)
+assert value["result"]["matched_line"] == "FAKE_AGENT_READY"
+'
+echo "new task: ok"
 
 cli pane send-keys "$board_pane" q
 board_exited=0

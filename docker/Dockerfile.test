@@ -31,7 +31,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
-    && apt-get install --no-install-recommends --yes python3 \
+    && apt-get install --no-install-recommends --yes git python3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/target/release/dolphin /usr/local/bin/dolphin

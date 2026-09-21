@@ -45,21 +45,24 @@ docker compose -f compose.test.yaml down -v --remove-orphans
 
 The builder uses `rust:1.96-bookworm` with Rust 1.96.1 and the official x86_64
 Zig 0.15.2 tarball/checksum pinned in `docker/Dockerfile.test`. It runs
-`cargo build --release --locked --bin dolphin`; the runtime installs only Python 3
-on Debian bookworm-slim. No host Rust or Zig toolchain is required.
+`cargo build --release --locked --bin dolphin`; the runtime installs Git and
+Python 3 on Debian bookworm-slim. No host Rust or Zig toolchain is required.
 
 The version command must print `herdr 0.8.2`. The runner owns cleanup with the same
 `down` command on exit, including failures.
 
 ## What the runner proves
 
-In order, the runner proves: server readiness and the isolated socket; workspace
-creation and a one-workspace API snapshot; fake-agent process readiness; agent
-ownership reported as `codex`; prompt delivery and agent output; Workboard snapshot
-preview; plugin link and focused overlay pane; visible Workboard rendering; `j`
-selection; `o` output view; `p` prompt forwarding and output; and `q` pane exit.
+In order, the runner proves: server readiness and the isolated socket; a Git
+fixture, workspace creation and a one-workspace API snapshot; fake-agent process
+readiness; agent ownership reported as `codex`; prompt delivery and agent output;
+Workboard snapshot preview; plugin link and focused overlay pane; visible
+Workboard rendering; `j` selection; `o` output view; `p` prompt forwarding and
+output; `k` workspace selection; `n` new task worktree creation with
+`DOLPHIN_AGENT_COMMAND` starting the new root agent; and `q` pane exit.
 Success prints the snapshot, ownership, prompt/output and preview `: ok` markers,
-five `workboard smoke: ok` markers, and finally `Docker Dolphin isolation: ok`.
+five `workboard smoke: ok` markers, `new task: ok`, and finally
+`Docker Dolphin isolation: ok`.
 
 The fake agent emits `FAKE_AGENT_READY`, then `FAKE_AGENT_WORKING <prompt>` and
 `FAKE_AGENT_DONE <prompt>`. It self-reexecs as `python3` with `HERDR_AGENT=codex`

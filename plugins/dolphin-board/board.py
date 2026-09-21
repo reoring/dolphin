@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import select
+import shlex
 import subprocess
 import sys
 import time
@@ -102,7 +103,7 @@ def render(data: dict, selected: int, message: str = "") -> str:
 
     lines = [
         f"{BOLD}DOLPHIN WORKBOARD{RESET}  "
-        f"{DIM}↑/↓ select · enter focus · p prompt · o output · q close{RESET}",
+        f"{DIM}↑/↓ select · enter focus · n new · p prompt · o output · q close{RESET}",
         "",
     ]
     if message:
@@ -115,11 +116,12 @@ def render(data: dict, selected: int, message: str = "") -> str:
     for workspace in workspaces:
         worktree = workspace.get("worktree") or {}
         path = worktree.get("checkout_path", "")
+        branch = worktree.get("branch") or "detached"
         label = workspace.get("label") or path or workspace.get("workspace_id", "?")
         marker = "▶" if item_index == selected else " "
         lines.append(
             f"{BOLD}{marker} {label}{RESET} "
-            f"{DIM}{workspace.get('agent_status', 'unknown')} · "
+            f"{DIM}{branch} · {workspace.get('agent_status', 'unknown')} · "
             f"{workspace.get('tab_count', 0)} tabs · "
             f"{workspace.get('pane_count', 0)} panes · {git_summary(path)}{RESET}"
         )
@@ -145,6 +147,85 @@ def focus(kind: str, target: str) -> str:
     if result.returncode:
         return result.stderr.strip() or f"Focus failed: {target}"
     return f"Focused {target}"
+
+def new_task(workspace: dict, old_settings: list[int] | None) -> str:
+    if old_settings is not None:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+    try:
+        sys.stdout.write("\nNew branch: ")
+        sys.stdout.flush()
+        branch = input().strip()
+    except (EOFError, KeyboardInterrupt):
+        return "New task cancelled"
+    finally:
+        if old_settings is not None:
+            tty.setcbreak(sys.stdin.fileno())
+    if not branch:
+        return "New task cancelled"
+
+    worktree = workspace.get("worktree") or {}
+    cwd = worktree.get("checkout_path") or workspace.get("cwd") or ""
+    if not cwd:
+        return "New task failed: workspace cwd unavailable"
+
+    binary = os.environ.get("HERDR_BIN_PATH", "herdr")
+    result = subprocess.run(
+        [
+            binary,
+            "worktree",
+            "create",
+            "--cwd",
+            cwd,
+            "--branch",
+            branch,
+            "--label",
+            branch,
+            "--focus",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if result.returncode:
+        return result.stderr.strip() or "Worktree create failed"
+    try:
+        value = json.loads(result.stdout)
+        payload = value.get("result", value)
+        workspace_id = payload["workspace"]["workspace_id"]
+        payload["worktree"]["path"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return result.stderr.strip() or "Worktree create returned invalid JSON"
+
+    agent_command = os.environ.get("DOLPHIN_AGENT_COMMAND", "").strip()
+    if not agent_command:
+        return f"Created {branch} ({workspace_id})"
+
+    try:
+        refreshed = snapshot()
+        root_pane = next(
+            pane["pane_id"]
+            for pane in refreshed.get("panes", [])
+            if pane.get("workspace_id") == workspace_id
+        )
+    except (KeyError, StopIteration, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+        return f"Created {branch} ({workspace_id}); root pane unavailable: {error}"
+
+    try:
+        command = shlex.split(agent_command)
+    except ValueError as error:
+        return str(error)
+    if command:
+        agent_result = subprocess.run(
+            [binary, "pane", "run", root_pane, *command],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if agent_result.returncode:
+            return agent_result.stderr.strip() or "Agent start failed"
+    return f"Created {branch} ({workspace_id})"
 
 
 def submit_prompt(target: str, old_settings: list[int] | None) -> str:
@@ -261,6 +342,27 @@ def main() -> int:
             elif key == "p" and items:
                 kind, target = items[selected]
                 message = submit_prompt(target, old_settings) if kind == "agent" else "Select an agent to send a prompt"
+            elif key == "n" and items:
+                kind, target = items[selected]
+                if kind == "workspace":
+                    workspace = next(
+                        workspace
+                        for workspace in data.get("workspaces", [])
+                        if workspace.get("workspace_id") == target
+                    )
+                    if not (workspace.get("worktree") or {}).get("checkout_path"):
+                        pane = next(
+                            pane
+                            for pane in data.get("panes", [])
+                            if pane.get("workspace_id") == target
+                        )
+                        workspace = {
+                            **workspace,
+                            "cwd": pane.get("cwd") or pane.get("foreground_cwd") or "",
+                        }
+                    message = new_task(workspace, old_settings)
+                else:
+                    message = "Select a workspace to start a new task"
             elif key == "o" and items:
                 kind, target = items[selected]
                 message = output_preview(target) if kind == "agent" else "Select an agent to read output"

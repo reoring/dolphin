@@ -12,6 +12,7 @@ services:
       XDG_RUNTIME_DIR: /var/lib/dolphin/runtime
       HERDR_CONFIG_PATH: /var/lib/dolphin/config/herdr/config.toml
       HERDR_SESSION: docker-proof
+      DOLPHIN_AGENT_COMMAND: python3 /usr/local/bin/fake-agent.py
       HERDR_SOCKET_PATH: /var/lib/dolphin/config/herdr/sessions/docker-proof/herdr.sock
     volumes:
       - ./scripts/docker/dolphin-test-entrypoint:/usr/local/bin/dolphin-test-entrypoint:ro
